@@ -7,8 +7,22 @@ Rottweiler is the user-facing name of this Husk No-JIT fork. Current builds publ
 Esta variante conserva o Android em QEMU, a imagem LineageOS v12, os discos
 QCOW2, a ponte de comandos/APKs, o display, o USB HID e o áudio existentes.
 Somente o backend de CPU e o caminho de inicialização dependente de JIT mudam.
-O caminho experimental que carrega bibliotecas Android diretamente no processo
-iOS não faz parte do target No-JIT: ele exige memória executável dinâmica.
+O target No-JIT executa os APKs dentro da VM Android.
+
+## Referências para o modo sem JIT
+
+[UTM SE](https://github.com/utmapp/UTM#utm-se) roda VMs no iOS com um
+interpretador encadeado. [iSH](https://github.com/ish-app/ish) aplica uma técnica
+parecida a programas Linux. O
+[TCTI do tctiSH](https://github.com/tctiSH/tctiSH) leva a ideia ao QEMU em
+hosts ARM64. Nos ensaios deste fork, o TCTI ainda não confirmou toque no APK.
+Por isso, o build padrão continua em TCI e a tela de boot mostra o tempo
+decorrido com os marcos do Android. Se o snapshot falhar, é possível repetir
+só essa etapa ou continuar explicitamente com o Android já instalado.
+
+O [modo sem JIT do Husk](https://itslevii.dev/docs/play-without-jit)
+usa bibliotecas convertidas para jogos compatíveis e depende da identidade de
+assinatura do app. O Rottweiler busca rodar APKs dentro do Android em QEMU.
 
 ## Estado da validação
 

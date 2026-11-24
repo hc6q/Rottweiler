@@ -57,7 +57,7 @@ struct BootScreen: View {
                                value: pulse)
                     .onAppear { pulse = true }
 
-                Text("HUSK")
+                Text(ExecutionMode.appName.uppercased())
                     .font(.system(size: 22, weight: .semibold))
                     .tracking(9)
                     .foregroundStyle(Theme.text)
@@ -66,7 +66,7 @@ struct BootScreen: View {
 
                 // The line that talks. Keyed on the index so each one fades
                 // into the next rather than snapping.
-                Text(Self.phrases[phrase % Self.phrases.count])
+                Text(ExecutionMode.noJIT ? "Starting Android with the CPU interpreter" : Self.phrases[phrase % Self.phrases.count])
                     .font(.system(size: 15))
                     .foregroundStyle(Theme.textDim)
                     .multilineTextAlignment(.center)
@@ -93,7 +93,7 @@ struct BootScreen: View {
                 // An escape hatch, but not an invitation: it turns up only once
                 // waiting has stopped being novel.
                 if now.timeIntervalSince(began) > 8 {
-                    Button("Use Husk while it starts", action: onSkip)
+                    Button("Use \(ExecutionMode.appName) while it starts", action: onSkip)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(Theme.textDim)
                         .padding(.top, 14)
@@ -105,6 +105,7 @@ struct BootScreen: View {
         .onReceive(tick) { now = $0 }
         .onChange(of: runner.bootProgress) { _ in lastStep = Date() }
         .onReceive(rotate) { _ in
+            guard !ExecutionMode.noJIT else { return }
             withAnimation(.easeInOut(duration: 0.45)) { phrase += 1 }
         }
         .animation(.easeInOut(duration: 0.3), value: now.timeIntervalSince(began) > 8)
@@ -148,7 +149,7 @@ struct BootScreen: View {
     /// so it can never claim more progress than the guest has made.
     private var shown: Int {
         let real = runner.bootProgress
-        guard real > 0, real < 100, !QemuRunner.didRestore else { return real }
+        guard !ExecutionMode.noJIT, real > 0, real < 100, !QemuRunner.didRestore else { return real }
         let next = QemuRunner.bootMilestones.map { $0.2 }.first { $0 > real } ?? 100
         let creep = Int(now.timeIntervalSince(lastStep) / 30)
         return max(real, min(real + creep, next - 1, 95))
@@ -158,6 +159,10 @@ struct BootScreen: View {
     /// in. Withheld until there is enough of a curve to divide by, and dropped
     /// again near the end, where being wrong is most annoying.
     private var remaining: String? {
+        if ExecutionMode.noJIT {
+            let seconds = max(0, Int(now.timeIntervalSince(QemuRunner.bootStarted)))
+            return String(format: "%d:%02d elapsed", seconds / 60, seconds % 60)
+        }
         let done = Double(runner.bootProgress)
         // Past zygote the remaining time is mostly app compilation, and the early
         // pace says nothing about it. The estimate kept promising "about a minute"

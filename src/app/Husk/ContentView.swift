@@ -120,10 +120,7 @@ struct ContentView: View {
         .fullScreenCover(isPresented: $showOnboarding) {
             OnboardingView {
                 showOnboarding = false
-                if Onboarding.autoStart, ExecutionMode.canStart {
-                    booting = true
-                    start()
-                }
+                startAutomaticallyIfReady()
             }
         }
         .sheet(isPresented: $showLogs) { LogView() }
@@ -147,6 +144,9 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .huskStartAndroid)) { _ in
             if guest.state == .ready { startFromLibrary() }
         }
+        .onChange(of: host.isReady) { ready in
+            if ready { AndroidAutoStart.clear() }
+        }
         .onChange(of: host.busy) { busy in
             if busy == nil { host.resumeImportedAPKs() }
         }
@@ -163,6 +163,9 @@ struct ContentView: View {
     private func evaluate() {
         try? guest.prepareFirmware()
         guest.refresh()
+        if AndroidAutoStart.readyAtLaunch == nil {
+            AndroidAutoStart.readyAtLaunch = guest.state == .ready
+        }
         HuskBridgeFS.shared.prepare()
 
         // What is installed is compared against the release by digest, not by
@@ -183,19 +186,21 @@ struct ContentView: View {
         JITBootstrap.prewarm()
 
 #endif
-        // Start on launch, when that is what was asked for.
-        //
-        // This deliberately did nothing for a long time, and the reason was
-        // sound: booting takes minutes and its cost depends on choices made
-        // before it starts, so it should not be a side effect of opening the
-        // app. But the setup flow now asks the question outright, and someone
-        // who answered yes has made the decision -- continuing to ignore it
-        // just means every launch begins by pressing Start.
+        startAutomaticallyIfReady()
+    }
+
+    private func startAutomaticallyIfReady() {
         guard Onboarding.autoStart, !started, guest.state == .ready,
-              !showOnboarding else { return }
+              !showOnboarding, AndroidAutoStart.readyAtLaunch == true,
+              ExecutionMode.canStart, !AndroidAutoStart.wasInterrupted else { return }
+        guard AndroidAutoStart.mark() else { return }
         HuskLog.log("ui", "starting Android on launch")
         booting = true
         start()
+        if !started {
+            AndroidAutoStart.clear()
+            booting = false
+        }
     }
 
     /// Whether the start screen should be up at all.
@@ -229,7 +234,7 @@ struct ContentView: View {
     }
 
     private func start() {
-        guard !started else { return }
+        guard !started, guest.state == .ready else { return }
 #if !HUSK_NO_JIT
         guard JITBootstrap.isDebuggerAttached else { return }
         HuskLog.log("ui", "CS_DEBUGGED set; starting QEMU")
@@ -279,6 +284,32 @@ struct ContentView: View {
         bridge.startWatching()
         if QemuRunner.soundEnabled { HuskAudio.shared.start() }
     }
+}
+
+/// A process that closes before Android answers must not start automatically
+/// on the next launch. A successful manual start clears the previous marker.
+@MainActor
+private enum AndroidAutoStart {
+    static var readyAtLaunch: Bool?
+
+    private static var marker: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("husk-autostart-pending")
+    }
+
+    static var wasInterrupted: Bool { FileManager.default.fileExists(atPath: marker.path) }
+
+    static func mark() -> Bool {
+        do {
+            try Data().write(to: marker, options: .atomic)
+            return true
+        } catch {
+            HuskLog.log("ui", "could not save the Android startup marker: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    static func clear() { try? FileManager.default.removeItem(at: marker) }
 }
 
 /// The guest's screen, with touch, plus a small status pill.
@@ -529,7 +560,7 @@ struct SetupView: View {
             switch guest.state {
             case .downloading(let p, let received, let total):
                 VStack(spacing: 10) {
-                    Text(guest.hasShippedSnapshot || GuestImage.shared.isFetchingSnapshot
+                    Text(guest.isFetchingSnapshot
                          ? "Downloading pre-booted Android"
                          : "Downloading Android runtime").font(.headline)
                     ProgressView(value: p).padding(.horizontal, 50)
@@ -539,6 +570,18 @@ struct SetupView: View {
                 }
             case .installing:
                 VStack(spacing: 10) { ProgressView(); Text("Installing…").font(.callout) }
+            case .snapshotFailed(let message):
+                VStack(spacing: 10) {
+                    Text("Could not prepare the snapshot").font(.headline)
+                    Text(message)
+                        .font(.caption).foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center).padding(.horizontal, 34)
+                    Button("Retry snapshot") { guest.downloadSnapshotNow() }
+                        .buttonStyle(.borderedProminent)
+                    Button(guest.hasShippedSnapshot ? "Use installed snapshot" : "Continue with cold boot") {
+                        guest.useInstalledAndroid()
+                    }
+                }
             case .failed(let message):
                 VStack(spacing: 10) {
                     Text("Something went wrong").font(.headline).foregroundStyle(.red)
