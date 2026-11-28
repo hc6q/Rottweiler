@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   ios:
-    runs-on: macos-15
+    runs-on: macos-15-intel
     timeout-minutes: 180
     env:
       HUSK_NO_JIT: '1'
